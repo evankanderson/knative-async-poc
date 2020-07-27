@@ -13,7 +13,7 @@ option go_package = "github.com/evankanderson/knative-async-poc/protocol";
 
 // The service for managing tasks from the worker side.
 service TaskManager {
-    rpc Get(GetRequest) returns (stream Work) {}
+    rpc Get(GetRequest) returns (Work) {}
 
     rpc Renew(RenewRequest) returns (google.protobuf.Empty) {}
 
@@ -30,11 +30,16 @@ message Work {
     // Generated ID representing the Work. An opaque value.
     string id = 1;
 
-    bytes payload = 2;
+    map<string, HeaderValue> headers = 2;
+    bytes payload = 3;
 
-    google.protobuf.Timestamp enqueued_at = 3;
+    google.protobuf.Timestamp enqueued_at = 4;
 
-    google.protobuf.Timestamp leased_until = 4;
+    google.protobuf.Timestamp leased_until = 5;
+}
+
+message HeaderValue {
+    repeated string value = 1;
 }
 
 message RenewRequest {
@@ -47,9 +52,12 @@ message RenewRequest {
 message FinishRequest {
     string id = 1;
 
-    bytes result = 2;
+    map<string, HeaderValue> result_headers = 2;
+    bytes result = 3;
 }
 
 message NackRequest {
     string id = 1;
+
+    string error = 2;
 }

@@ -23,7 +23,7 @@ spec:
           - name: QUEUE
             value: "machinery_tasks"
       - name: user-container
-        image: gcr.io/knative-samples/helloworld-nodejs
+        image: "ko://github.com/evankanderson/knative-async-poc/cmd/slow-example"
         resources:
             limits:
               memory: "128Mi"

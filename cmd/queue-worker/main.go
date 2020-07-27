@@ -28,33 +28,43 @@ func main() {
 	defer conn.Close()
 
 	c := protocol.NewTaskManagerClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
-	defer cancel()
+	ctx := context.Background()
 
 	req := &protocol.GetRequest{QueueName: os.Getenv("QUEUE")}
 
-	stream, err := c.Get(ctx, req)
-	if err != nil {
-		log.Fatal("Failed to fetch work from queue", err)
-	}
-
 	for {
-		lease, err := stream.Recv()
+		// TODO: move to function and set timeout.
+		//		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		//		defer cancel()
+		lease, err := c.Get(ctx, req)
 		if err != nil {
 			if status.Code(err) == codes.Unavailable {
-				stream, err = c.Get(ctx, req)
+				lease, err = c.Get(ctx, req)
 				if err != nil {
 					log.Fatal("Failed to reconnect to queue", err)
 				}
 			}
 			log.Fatal("Lease error:", err)
 		}
-		payload := bytes.NewBuffer(lease.Payload)
+		if lease.Id == "" {
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-		resp, err := http.Post("http://localhost:8080", "", payload)
+		req, err := http.NewRequest("POST", "http://localhost:8080/v1/", bytes.NewBuffer(lease.Payload))
+		if err != nil {
+			log.Print("Unable to create request: ", err)
+			continue
+		}
+		for k, v := range lease.Headers {
+			req.Header[k] = v.Value
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			log.Fatal("Failed to post payload", err)
 		}
+		defer resp.Body.Close()
 		// TODO: start background lease renewal
 		data, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
@@ -64,10 +74,18 @@ func main() {
 
 		if resp.StatusCode < 300 {
 			log.Print("Processed ", lease.Id)
-			c.Finish(ctx, &protocol.FinishRequest{Id: lease.Id})
+			finish := &protocol.FinishRequest{
+				Id:            lease.Id,
+				Result:        data,
+				ResultHeaders: make(map[string]*protocol.HeaderValue, len(resp.Header)),
+			}
+			for k, v := range resp.Header {
+				finish.ResultHeaders[k] = &protocol.HeaderValue{Value: v}
+			}
+			c.Finish(ctx, finish)
 		} else {
 			log.Printf("Failed %q: %d", lease.Id, resp.StatusCode)
-			c.Nack(ctx, &protocol.NackRequest{Id: lease.Id})
+			c.Nack(ctx, &protocol.NackRequest{Id: lease.Id, Error: resp.Status})
 		}
 	}
 }

@@ -1,0 +1,35 @@
+# This would be created automatically by the controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-worker
+spec:
+  selector:
+    matchLabels:
+      app: app-worker
+  template:
+    metadata:
+      labels:
+        app: app-worker
+    spec:
+      containers:
+      - name: queue-worker
+        image: "ko://github.com/evankanderson/knative-async-poc/cmd/queue-worker"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "50m"
+        env:
+          - name: QUEUE
+            value: "machinery_tasks"
+      - name: user-container
+        image: gcr.io/knative-samples/helloworld-nodejs
+        resources:
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+        ports:
+          - containerPort: 8080
+        env:
+          - name: PORT
+            value: "8080"

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/evankanderson/knative-async-poc/protocol"
 	"github.com/go-redis/redis/v8"
@@ -85,7 +87,30 @@ func (api *ExternalAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "Failed to unmarshal %q: %v", id, err)
 			return
 		}
-		fmt.Fprintf(w, `{"id": %q, "status": %q}`, work.ID, work.Status())
+		retval := struct {
+			ID      string              `json:"id"`
+			Status  string              `json:"status"`
+			Result  int                 `json:"result,omitempty"`
+			Headers map[string][]string `json:"headers,omitempty"`
+			Payload string              `json:"payload,omitempty"`
+		}{
+			ID:      work.ID,
+			Status:  work.Status(),
+			Result:  0, // TODO: plumb this through
+			Headers: work.ResponseHeaders,
+		}
+		if utf8.Valid(work.ResponseBody) {
+			retval.Payload = string(work.ResponseBody)
+		} else {
+			retval.Payload = base64.StdEncoding.EncodeToString(work.ResponseBody)
+		}
+		out, err := json.Marshal(retval)
+		if err != nil {
+			w.WriteHeader(500)
+			fmt.Fprint(w, "Failed to marshal response: ", err)
+			return
+		}
+		w.Write(out)
 	case http.MethodPost:
 		data, err := ioutil.ReadAll(r.Body)
 		if err != nil {
@@ -137,6 +162,7 @@ type Work struct {
 	EnqueueTime time.Time
 	LeaseUntil  time.Time
 	CompletedAt time.Time
+	Retries     []time.Time
 	// Response info
 	ResponseHeaders http.Header
 	ResponseBody    []byte
@@ -198,7 +224,9 @@ func (tms *TaskManagerServer) Get(ctx context.Context, req *protocol.GetRequest)
 			log.Printf("Error unmarshalling %q: %v", key, err)
 		}
 		if work.LeaseUntil.Before(time.Now()) {
-			leaseEnd, err := tms.claim(ctx, work)
+			leaseEnd, err := tms.update(ctx, work, func(work *Work) {
+				work.LeaseUntil = time.Now().Add(10 * time.Minute)
+			})
 			if err != nil {
 				log.Printf("Failed to claim %q: %v", work.ID, err)
 				continue
@@ -240,7 +268,12 @@ func (tms *TaskManagerServer) Renew(ctx context.Context, req *protocol.RenewRequ
 	if err != nil {
 		return nil, err
 	}
-	tms.claim(ctx, *work)
+	_, err = tms.update(ctx, *work, func(work *Work) {
+		work.LeaseUntil = time.Now().Add(10 * time.Minute)
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &empty.Empty{}, nil
 }
 
@@ -271,21 +304,33 @@ func (tms *TaskManagerServer) Nack(ctx context.Context, req *protocol.NackReques
 	if err != nil {
 		return nil, err
 	}
-	work.CompletedAt = time.Now()
-	work.FailureStatus = req.Error
-	if err := tms.finish(ctx, work, oldKey); err != nil {
+	if len(work.Retries) > 2 {
+		work.CompletedAt = time.Now()
+		work.FailureStatus = req.Error
+		if err := tms.finish(ctx, work, oldKey); err != nil {
+			return nil, err
+		}
+		log.Printf("Failed task %q", req.Id)
+		return &empty.Empty{}, nil
+	}
+	// Enqueue another retry
+	_, err = tms.update(ctx, *work, func(work *Work) {
+		work.Retries = append(work.Retries, time.Now())
+		work.LeaseUntil = time.Time{}
+	})
+	if err != nil {
 		return nil, err
 	}
-	log.Printf("Failed task %q", req.Id)
 	return &empty.Empty{}, nil
 }
 
-func (tms *TaskManagerServer) claim(ctx context.Context, work Work) (time.Time, error) {
+func (tms *TaskManagerServer) update(ctx context.Context, work Work, update func(work *Work)) (time.Time, error) {
 	oldJSON, err := json.Marshal(work)
 	if err != nil {
 		return time.Time{}, err
 	}
-	work.LeaseUntil = time.Now().Add(10 * time.Minute)
+
+	update(&work)
 	workJSON, err := json.Marshal(work)
 	if err != nil {
 		return time.Time{}, err

@@ -13,14 +13,13 @@ This consists of three components:
    This is curretly a Deployment + Service, but it could easily be a Knative Service if desired.
 
    This is the only component that talks to Redis. It exposes a simple HTTP API with three endpoints:
-   * `POST /v1/`: creates a new Work unit. Returns an ID for the work unit
-   * `GET /v1/<id>`: gets the status of a work unit.
-   * `GET /queueLength`: returns the number of items available for work.
 
+   - `POST /v1/`: creates a new Work unit. Returns an ID for the work unit
+   - `GET /v1/<id>`: gets the status of a work unit.
+   - `GET /queueLength`: returns the number of items available for work.
 
+3) A set of workers, which consist of a fixed `queue-worker` and a user-controlled sidecar.
 
-3. A set of workers, which consist of a fixed `queue-worker` 
-
-   Currently a deployment with 1 replica -- TODO: convert this to https://keda.sh/ scaling
+   Currently a hand-rolled deployment with 1 replica -- TODO: convert this to https://keda.sh/ scaling, and put under controller automation.
 
    Uses [a GRPC protocol](protocol/taskqueue.proto) to communicate with the API manager

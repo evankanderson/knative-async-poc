@@ -1,4 +1,4 @@
-A proof of concept for [the futures API](https://docs.google.com/document/d/1pJd12gb32XH3GU9mBmp9YSlYLPU5efiIinDJPu6H998/edit) data plane.
+A proof of concept for [the futures API](https://docs.google.com/document/d/1wp67KuCeUa59Ftbj-B4loCJGTkSiG4abCpXu42aVI6k/edit) data plane.
 
 (See that doc for pretty pictures)
 
